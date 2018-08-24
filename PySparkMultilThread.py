@@ -13,6 +13,7 @@ import datetime
 import time
 import numpy as np
 
+import os
 # 初始化spark对象
 spark = SparkSession.builder.master("local").appName("PySparkDemo").getOrCreate()
 
