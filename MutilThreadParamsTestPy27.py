@@ -6,11 +6,35 @@
 # @Software : IntelliJ IDEA
 # @Email ： 909709223@qq.com
 import sys
-from concurrent.futures import ThreadPoolExecutor, wait, ALL_COMPLETED
+import multiprocessing
 
 from pyspark.sql import Row
 from pyspark.sql import SparkSession
 import logging
+
+
+def __get_logger__(name, level=logging.INFO):
+
+    '''
+    log日志输出格式方法
+    :param name:
+    :param level:
+    :return:
+    '''
+
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
+
+    if logger.handlers:
+        pass
+    else:
+        ch = logging.StreamHandler(sys.stderr)
+        ch.setLevel(level)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        ch.setFormatter(formatter)
+        logger.addHandler(ch)
+    return logger
+
 
 def __load_mysql_data__(host_name, port, db_name, username, password):
 
@@ -19,10 +43,9 @@ def __load_mysql_data__(host_name, port, db_name, username, password):
     :return: MySQL配置表单的DataFrame数据
     '''
 
-    # 函数调用之前先休眠1s
     # spark加载MySQL数据
     jdbcDF = spark.read.format("jdbc"). \
-        option("url", "jdbc:mysql://%s:%s/%s" % (host_name, port, db_name)). \
+        option("url", "jdbc:mysql://%s:%s/%s?useUnicode=true&characterEncoding=utf8" % (host_name, port, db_name)). \
         option("driver", "com.mysql.jdbc.Driver"). \
         option("dbtable", "model_source_monitor_cfg"). \
         option("user", "%s" % (username)). \
@@ -32,6 +55,7 @@ def __load_mysql_data__(host_name, port, db_name, username, password):
 
 def __check_data__(tab):
 
+    logger = __get_logger__("check_data")
     try:
         conn_info = tab.conn_info
         dt = conn_info["dt"]
@@ -40,7 +64,8 @@ def __check_data__(tab):
         db_name = conn_info["db_name"]
         username = conn_info["username"]
         password = conn_info["password"]
-        print(dt, host_name, port, db_name, username, password)
+        logger.info("conn params is {0},{1},{2},{3},{4},{5}".format(dt, host_name, port, db_name, username, password))
+
         model_table_name = tab.model_table_name
         model_tab_type = tab.model_tab_type
         model_pri_key = tab.model_pri_key
@@ -50,7 +75,7 @@ def __check_data__(tab):
         source_pri_key = tab.source_pri_key
         source_tab_par = tab.source_tab_par
         status = tab.status
-        print(model_table_name, model_tab_type, model_pri_key, model_tab_par, source_pri_tab, source_tab_type, source_pri_key, source_tab_par, status)
+        logger.info("model params is {0},{1},{2},{3},{4},{5},{6},{7},{8}".format(model_table_name, model_tab_type, model_pri_key, model_tab_par, source_pri_tab, source_tab_type, source_pri_key, source_tab_par, status))
     except Exception as e:
         print(e)
 
@@ -78,24 +103,29 @@ if __name__ == '__main__':
     db_name = "test"
     username = "root"
     password = "123456"
+    thread_num = 10
 
     conn_info = {'dt' : dt, 'host_name' : host_name, 'port' : port, 'db_name' : db_name, 'username' : username, 'password' : password}
-    logger.info("params is {}, {}, {}, {}, {}, {}, {}".format(dt, host_name, port, db_name, username, password))
+    logger.info("params is {}, {}, {}, {}, {}, {}, {}".format(dt, host_name, port, db_name, username, password, thread_num))
     # 查询MySQL配置表单数据
     df = __load_mysql_data__(host_name, port, db_name, username, password)
     tabs = df.rdd.map(lambda x: Row(conn_info = conn_info,
                                     model_table_name = str(x[0]),
-                                    model_tab_type = str(x[1]),
+                                    model_tab_type = x[1],
                                     model_pri_key = str(x[2]),
                                     model_tab_par = str(x[3]),
                                     source_pri_tab = str(x[4]),
-                                    source_tab_type = str(x[5]),
+                                    source_tab_type = x[5],
                                     source_pri_key = str(x[6]),
                                     source_tab_par = str(x[7]),
-                                    status = str(x[8]))).collect()
+                                    status = x[8])).collect()
 
-    # 启动线程池提交任务
-    executor = ThreadPoolExecutor(max_workers=len(tabs))
-    all_task = [executor.submit(__check_data__, (tab)) for tab in tabs]
-    # 阻塞等待所有任务执行完成后返回
-    wait(all_task, return_when=ALL_COMPLETED)
+    # 定义同时至多起几个线程
+    pool = multiprocessing.Pool(10)
+    for tab in tabs:
+        pool.apply_async(__check_data__, args=(tab,))
+
+    # 用来阻止多余的进程涌入进程池 Pool 造成进程阻塞。
+    pool.close()
+    # 方法实现进程间的同步，等待所有进程退出。
+    pool.join()

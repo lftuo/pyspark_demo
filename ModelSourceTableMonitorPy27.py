@@ -10,8 +10,32 @@ from pyspark.sql import Row
 import dateutil.parser as dp
 import datetime
 
-from concurrent.futures import ThreadPoolExecutor, wait, ALL_COMPLETED
+import multiprocessing
 import sys
+import logging
+
+
+def __get_logger__(name, level=logging.INFO):
+
+    '''
+    log日志输出格式方法
+    :param name:
+    :param level:
+    :return:
+    '''
+
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
+
+    if logger.handlers:
+        pass
+    else:
+        ch = logging.StreamHandler(sys.stderr)
+        ch.setLevel(level)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        ch.setFormatter(formatter)
+        logger.addHandler(ch)
+    return logger
 
 
 def __last_month__(dt):
@@ -37,13 +61,14 @@ def __load_mysql_data__(host_name, port, db_name, username, password):
     # 函数调用之前先休眠1s
     # spark加载MySQL数据
     jdbcDF = spark.read.format("jdbc"). \
-        option("url", "jdbc:mysql://%s:%s/%s" % (host_name, port, db_name)). \
+        option("url", "jdbc:mysql://%s:%s/%s?useUnicode=true&characterEncoding=utf8" % (host_name, port, db_name)). \
         option("driver", "com.mysql.jdbc.Driver"). \
         option("dbtable", "model_source_monitor_cfg"). \
         option("user", "%s" % (username)). \
         option("password", "%s" % (password)). \
         load()
     return jdbcDF
+
 
 def __check_data__(tab):
 
@@ -53,15 +78,15 @@ def __check_data__(tab):
     :return:
     '''
 
+    logger = __get_logger__("check_data")
     conn_info = tab.conn_info
-    print('conn_info--------',conn_info)
     dt = conn_info["dt"]
     host_name = conn_info["host_name"]
     port = conn_info["port"]
     db_name = conn_info["db_name"]
     username = conn_info["username"]
     password = conn_info["password"]
-    print('params------------',dt, host_name, port, db_name, username, password)
+    logger.info("conn params is [{0},{1},{2},{3},{4},{5}]".format(dt, host_name, port, db_name, username, password))
 
     model_table_name = tab.model_table_name
     model_tab_type = tab.model_tab_type
@@ -72,7 +97,7 @@ def __check_data__(tab):
     source_pri_key = tab.source_pri_key
     source_tab_par = tab.source_tab_par
     status = tab.status
-    # print(model_table_name, model_tab_type, model_pri_key, model_tab_par, source_pri_tab, source_tab_type, source_pri_key, source_tab_par, status)
+    logger.info("model params is [{0},{1},{2},{3},{4},{5},{6},{7},{8}]".format(model_table_name, model_tab_type, model_pri_key, model_tab_par, source_pri_tab, source_tab_type, source_pri_key, source_tab_par, status))
 
     # 如果status==1，则进行数据监控
     if status == 1:
@@ -92,11 +117,13 @@ def __check_data__(tab):
             where 
                 {} = '{}'
         """.format(model_table_name, model_tab_par, model_real_dt)
+        logger.info("cnt_sql is [{0}]".format(cnt_sql))
         cnt = spark.sql(cnt_sql).rdd.collect()[0].cnt
 
         if cnt == 0:
             # 如果当前监控表单数据总量为0，则空值比例为-1，表示当前表数据未到，spark SQL插入查询结果
             rst_df = [{'tab_name':model_table_name, 'dt':dt, 'last_count':0, 'null_rate':-1}]
+            logger.info("rst_df is [{0}]".format(rst_df))
             spark.createDataFrame(rst_df).write.\
                 mode("append").\
                 format("jdbc").\
@@ -120,11 +147,14 @@ def __check_data__(tab):
                 where
                     {} = '{}'
             """.format(source_pri_tab, source_tab_par, source_real_dt)
+            logger.info("pri_cnt_sql is [{0}]".format(pri_cnt_sql))
             pri_cnt = spark.sql(pri_cnt_sql).rdd.collect()[0].cnt
 
             if pri_cnt == 0:
                 # 如果主表的数据总量为0，则空值比例为-100，表示主表数据未到
                 rst_df = [{'tab_name':model_table_name, 'dt':dt, 'last_count':cnt, 'null_rate':-100}]
+                logger.info("rst_df is [{0}]".format(rst_df))
+
                 spark.createDataFrame(rst_df).write. \
                     mode("append"). \
                     format("jdbc"). \
@@ -141,7 +171,7 @@ def __check_data__(tab):
                     from 
                     (
                         select
-                            {} 
+                            {},{}
                         from
                             {}
                         where
@@ -150,17 +180,21 @@ def __check_data__(tab):
                     left join
                     (
                         select
-                            {}
+                            {},{}
                         from
                             {}
                         where
                             {} = '{}'
-                    ) t2 on t1\.{} = t2\.{} where t1\.{} is null
-                """.format(model_pri_key, model_table_name, model_tab_par, model_real_dt, source_pri_key,
+                    ) t2 on t1.{} = t2.{} where t1.{} is null
+                """.format(model_pri_key, model_tab_par, model_table_name, model_tab_par, model_real_dt, source_pri_key, source_tab_par,
                            source_pri_tab, source_tab_par, source_real_dt, model_tab_par, source_tab_par, model_pri_key)
+                logger.info("join_sql is [{0}]".format(join_sql))
                 nullCnt = spark.sql(join_sql).rdd.collect()[0].cnt
+
                 nullRate = format(float(nullCnt)/float(pri_cnt), '.9f')
                 rst_df = [{'tab_name':model_table_name, 'dt':dt, 'last_count':cnt, 'null_rate':nullRate}]
+                logger.info("rst_df is [{0}]".format(rst_df))
+
                 spark.createDataFrame(rst_df).write. \
                     mode("append"). \
                     format("jdbc"). \
@@ -173,11 +207,9 @@ def __check_data__(tab):
 
 if __name__ == '__main__':
 
-    print('version info1--------', sys.version)
-    print('version info2--------', sys.version_info)
     # spark对象初始化
     app_name = "ModelSourceTableMonitor"
-    spark = SparkSession.builder.master("local").appName(app_name).getOrCreate()
+    spark = SparkSession.builder.master("yarn").appName(app_name).getOrCreate()
     spark.conf.set("spark.sql.hive.convertMetatoreParquet", "false")
     sc = spark.sparkContext
 
@@ -194,30 +226,27 @@ if __name__ == '__main__':
     password = sys.argv[6]
     thread_num = sys.argv[7]
     logger.error("params is dt:{}, host_name:{}, port:{}, db_name:{}, username:{}, password:{}, thread_num:{}".format(dt, host_name, port, db_name, username, password, thread_num))
-    # dt = "20180824"
-    # host_name = "127.0.0.1"
-    # port = "3306"
-    # db_name = "test"
-    # username = "root"
-    # password = "123456"
 
     conn_info = {'dt' : dt, 'host_name' : host_name, 'port' : port, 'db_name' : db_name, 'username' : username, 'password' : password}
     # 查询MySQL配置表单数据
     df = __load_mysql_data__(host_name, port, db_name, username, password)
     tabs = df.rdd.map(lambda x: Row(conn_info = conn_info,
                                     model_table_name = str(x[0]),
-                                    model_tab_type = str(x[1]),
+                                    model_tab_type = x[1],
                                     model_pri_key = str(x[2]),
                                     model_tab_par = str(x[3]),
                                     source_pri_tab = str(x[4]),
-                                    source_tab_type = str(x[5]),
+                                    source_tab_type = x[5],
                                     source_pri_key = str(x[6]),
                                     source_tab_par = str(x[7]),
-                                    status = str(x[8]))).collect()
+                                    status = x[8])).collect()
 
-    print(tabs)
-    # 启动线程池提交任务
-    executor = ThreadPoolExecutor(max_workers=thread_num)
-    all_task = [executor.submit(__check_data__, (tab)) for tab in tabs]
-    # 阻塞等待所有任务执行完成后返回
-    wait(all_task, return_when = ALL_COMPLETED)
+    # 定义同时至多起几个线程
+    pool = multiprocessing.Pool(int(thread_num))
+    for tab in tabs:
+        pool.apply_async(__check_data__, args=(tab,))
+
+    # 用来阻止多余的进程涌入进程池 Pool 造成进程阻塞。
+    pool.close()
+    # 方法实现进程间的同步，等待所有进程退出。
+    pool.join()
