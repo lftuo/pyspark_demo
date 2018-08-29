@@ -101,6 +101,10 @@ def __check_data__(tab):
 
     # 如果status==1，则进行数据监控
     if status == 1:
+        app_name = "ModelSourceTableMonitor"
+        spark = SparkSession.builder.master("yarn").appName(app_name).getOrCreate()
+        spark.conf.set("spark.sql.hive.convertMetatoreParquet", "false")
+
         # 如果当前表单为月表，则根据dt获取上月时间数据：
         # 如：dt=20180824 则时间日期为201807
         if model_tab_type == 2:

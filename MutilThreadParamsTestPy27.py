@@ -11,9 +11,10 @@ import multiprocessing
 from pyspark.sql import Row
 from pyspark.sql import SparkSession
 import logging
+from logging import handlers
 
 
-def __get_logger__(name, level=logging.INFO):
+def get_logger(name, level=logging.INFO):
 
     '''
     log日志输出格式方法
@@ -28,15 +29,19 @@ def __get_logger__(name, level=logging.INFO):
     if logger.handlers:
         pass
     else:
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         ch = logging.StreamHandler(sys.stderr)
         ch.setLevel(level)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         ch.setFormatter(formatter)
+        th = handlers.TimedRotatingFileHandler(filename="/Users/tuotuo/Documents/log.txt",backupCount=5,encoding='utf-8')
+        th.setFormatter(formatter)
+
         logger.addHandler(ch)
+        logger.addHandler(th)
     return logger
 
 
-def __load_mysql_data__(host_name, port, db_name, username, password):
+def load_mysql_data(host_name, port, db_name, username, password):
 
     '''
     加载MySQL中的爬虫数据
@@ -53,9 +58,9 @@ def __load_mysql_data__(host_name, port, db_name, username, password):
         load()
     return jdbcDF
 
-def __check_data__(tab):
+def check_data(tab):
 
-    logger = __get_logger__("check_data")
+    logger = get_logger("check_data",logging.DEBUG)
     try:
         conn_info = tab.conn_info
         dt = conn_info["dt"]
@@ -75,7 +80,9 @@ def __check_data__(tab):
         source_pri_key = tab.source_pri_key
         source_tab_par = tab.source_tab_par
         status = tab.status
-        logger.info("model params is {0},{1},{2},{3},{4},{5},{6},{7},{8}".format(model_table_name, model_tab_type, model_pri_key, model_tab_par, source_pri_tab, source_tab_type, source_pri_key, source_tab_par, status))
+        logger.debug("model params is {0},{1},{2},{3},{4},{5},{6},{7},{8}".format(model_table_name, model_tab_type, model_pri_key, model_tab_par, source_pri_tab, source_tab_type, source_pri_key, source_tab_par, status))
+        logger.error("error test")
+        logger.warning("warning test")
     except Exception as e:
         print(e)
 
@@ -108,7 +115,7 @@ if __name__ == '__main__':
     conn_info = {'dt' : dt, 'host_name' : host_name, 'port' : port, 'db_name' : db_name, 'username' : username, 'password' : password}
     logger.info("params is {}, {}, {}, {}, {}, {}, {}".format(dt, host_name, port, db_name, username, password, thread_num))
     # 查询MySQL配置表单数据
-    df = __load_mysql_data__(host_name, port, db_name, username, password)
+    df = load_mysql_data(host_name, port, db_name, username, password)
     tabs = df.rdd.map(lambda x: Row(conn_info = conn_info,
                                     model_table_name = str(x[0]),
                                     model_tab_type = x[1],
@@ -123,7 +130,7 @@ if __name__ == '__main__':
     # 定义同时至多起几个线程
     pool = multiprocessing.Pool(10)
     for tab in tabs:
-        pool.apply_async(__check_data__, args=(tab,))
+        pool.apply_async(check_data, args=(tab,))
 
     # 用来阻止多余的进程涌入进程池 Pool 造成进程阻塞。
     pool.close()
