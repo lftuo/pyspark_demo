@@ -10,11 +10,10 @@ import multiprocessing
 
 from pyspark.sql import Row
 from pyspark.sql import SparkSession
-import logging
-from logging import handlers
+import logging.handlers
 
 
-def get_logger(name, level=logging.INFO):
+def get_logger(name):
 
     '''
     log日志输出格式方法
@@ -22,22 +21,21 @@ def get_logger(name, level=logging.INFO):
     :param level:
     :return:
     '''
-
+    logging.basicConfig()
     logger = logging.getLogger(name)
-    logger.setLevel(level)
+    logger.setLevel(logging.INFO)
 
-    if logger.handlers:
-        pass
-    else:
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        ch = logging.StreamHandler(sys.stderr)
-        ch.setLevel(level)
-        ch.setFormatter(formatter)
-        th = handlers.TimedRotatingFileHandler(filename="/Users/tuotuo/Documents/log.txt",backupCount=5,encoding='utf-8')
-        th.setFormatter(formatter)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    ch = logging.StreamHandler(sys.stderr)
+    ch.setLevel(logging.INFO)
+    ch.setFormatter(formatter)
+    logger.addHandler(ch)
 
-        logger.addHandler(ch)
-        logger.addHandler(th)
+    th = logging.handlers.RotatingFileHandler(filename="test.log", maxBytes=1000, backupCount=5, encoding='utf-8')
+    th.setLevel(logging.DEBUG)
+    th.setFormatter(formatter)
+
+    logger.addHandler(th)
     return logger
 
 
@@ -60,7 +58,7 @@ def load_mysql_data(host_name, port, db_name, username, password):
 
 def check_data(tab):
 
-    logger = get_logger("check_data",logging.DEBUG)
+    logger = get_logger("check_data")
     try:
         conn_info = tab.conn_info
         dt = conn_info["dt"]
@@ -128,7 +126,7 @@ if __name__ == '__main__':
                                     status = x[8])).collect()
 
     # 定义同时至多起几个线程
-    pool = multiprocessing.Pool(10)
+    pool = multiprocessing.Pool(thread_num)
     for tab in tabs:
         pool.apply_async(check_data, args=(tab,))
 
